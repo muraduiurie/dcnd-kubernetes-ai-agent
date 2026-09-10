@@ -219,7 +219,3 @@ type AIAgentList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []AIAgent `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&AIAgent{}, &AIAgentList{})
-}
