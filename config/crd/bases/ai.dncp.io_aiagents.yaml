@@ -1,0 +1,383 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: aiagents.ai.dncp.io
+spec:
+  group: ai.dncp.io
+  names:
+    kind: AIAgent
+    listKind: AIAgentList
+    plural: aiagents
+    shortNames:
+    - aia
+    singular: aiagent
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.model.provider
+      name: Provider
+      type: string
+    - jsonPath: .spec.model.model
+      name: Model
+      type: string
+    - jsonPath: .status.activeRuns
+      name: Runs
+      type: integer
+    - jsonPath: .status.usage.totalTokens
+      name: Tokens
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AIAgent is the cluster-scoped agent definition. The operator provisions a
+          runtime for it and generates the read-only identities it may borrow.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              AIAgentSpec is the agent definition: who the agent is, what it may read,
+              what it may propose, and what it costs at most.
+            properties:
+              instructions:
+                description: |-
+                  Instructions become the system prompt. Never put run-specific text
+                  here; that belongs in AgentRun.spec.objective.
+                minLength: 1
+                type: string
+              limits:
+                description: |-
+                  LimitsSpec bounds one investigation. All three are enforced inside the
+                  runtime loop and reported in the run status.
+                properties:
+                  maxSteps:
+                    default: 20
+                    description: MaxSteps caps model turns per run.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maxTokensPerRun:
+                    default: 50000
+                    description: MaxTokensPerRun caps input plus output tokens per
+                      run.
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  timeout:
+                    default: 10m
+                    description: Timeout caps the wall clock of the investigation
+                      phase.
+                    type: string
+                type: object
+              maxConcurrentRuns:
+                default: 5
+                description: |-
+                  MaxConcurrentRuns caps runs in a non-terminal phase for this agent.
+                  Admission rejects runs above it.
+                format: int32
+                minimum: 1
+                type: integer
+              model:
+                description: ModelSpec identifies the model and how to authenticate
+                  to it.
+                properties:
+                  baseURL:
+                    description: |-
+                      BaseURL overrides the provider endpoint. Required for ollama and for
+                      OpenAI-compatible gateways.
+                    type: string
+                  model:
+                    description: Model is the provider-specific model identifier.
+                    minLength: 1
+                    type: string
+                  provider:
+                    description: ModelProvider selects the adapter the runtime uses
+                      to talk to a model.
+                    enum:
+                    - anthropic
+                    - openai
+                    - ollama
+                    type: string
+                  secretRef:
+                    description: |-
+                      SecretRef points at the key holding the provider API key. The Secret
+                      must live in the operator namespace, since AIAgent is cluster-scoped.
+                    properties:
+                      key:
+                        description: The key of the secret to select from.  Must be
+                          a valid secret key.
+                        type: string
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      optional:
+                        description: Specify whether the Secret or its key must be
+                          defined
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                required:
+                - model
+                - provider
+                type: object
+              permissions:
+                description: |-
+                  PermissionsSpec defines what the runtime may read, and where. Listing a
+                  resource grants get, list and watch. There is no verbs field on purpose:
+                  read-only is structural, not a convention.
+                properties:
+                  namespaces:
+                    description: |-
+                      Namespaces the agent may investigate. Runs in any other namespace are
+                      rejected at admission and never reach the runtime.
+                    items:
+                      type: string
+                    minItems: 1
+                    type: array
+                  resources:
+                    description: |-
+                      Resources the agent-reader Role grants, by plural resource name, with
+                      subresources as "pods/log". The operator resolves the API group through
+                      discovery when it generates the Role.
+                    example:
+                    - pods
+                    - pods/log
+                    - events
+                    - replicasets
+                    - deployments
+                    items:
+                      type: string
+                    minItems: 1
+                    type: array
+                required:
+                - namespaces
+                - resources
+                type: object
+              policy:
+                description: PolicySpec controls which proposed actions may be applied
+                  without a human.
+                properties:
+                  allowRawPatch:
+                    default: false
+                    description: |-
+                      AllowRawPatch enables the RawPatch escape hatch for this agent. Off by
+                      default.
+                    type: boolean
+                  approvalRequiredFor:
+                    description: |-
+                      ApprovalRequiredFor lists action types that always need approval, even
+                      when a run is in auto mode. RawPatch requires approval regardless of
+                      this list.
+                    items:
+                      description: |-
+                        ActionType is the closed vocabulary of changes the operator knows how to
+                        apply. Each value has exactly one deterministic executor. The runtime may
+                        propose these and nothing else.
+                      enum:
+                      - RollbackDeployment
+                      - SetImage
+                      - Scale
+                      - RestartRollout
+                      - SetEnv
+                      - SetResources
+                      - SetConfigMapKey
+                      - DeletePod
+                      - RawPatch
+                      type: string
+                    type: array
+                type: object
+              tools:
+                items:
+                  description: ToolSet names a group of read-only tools the runtime
+                    exposes to the model.
+                  enum:
+                  - kubernetes
+                  type: string
+                minItems: 1
+                type: array
+              triggers:
+                items:
+                  description: |-
+                    TriggerSpec creates runs from Alertmanager notifications. A firing alert
+                    whose labels match creates a run in the namespace named by the alert's
+                    namespace label. A resolved notification supersedes that run if nothing
+                    has been applied yet.
+                  properties:
+                    cooldown:
+                      default: 10m
+                      description: |-
+                        Cooldown is how long after a run for the same alert fingerprint reaches
+                        a terminal phase before a new one may be created.
+                      type: string
+                    match:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Match is a set of alert labels that must all be equal for the trigger
+                        to fire.
+                      minProperties: 1
+                      type: object
+                    name:
+                      minLength: 1
+                      type: string
+                    objective:
+                      description: |-
+                        Objective is a Go template rendered with the alert's Labels,
+                        Annotations and Fingerprint. The result becomes the run's objective.
+                      minLength: 1
+                      type: string
+                    remediationMode:
+                      default: propose
+                      description: RemediationMode is copied into the runs this trigger
+                        creates.
+                      enum:
+                      - propose
+                      - auto
+                      type: string
+                  required:
+                  - match
+                  - name
+                  - objective
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+            required:
+            - instructions
+            - model
+            - permissions
+            - tools
+            type: object
+          status:
+            description: AIAgentStatus is written by the operator only.
+            properties:
+              activeRuns:
+                description: ActiveRuns counts runs in a non-terminal phase.
+                format: int32
+                type: integer
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+              usage:
+                description: Usage aggregates consumption across all runs of this
+                  agent.
+                properties:
+                  estimatedCost:
+                    description: |-
+                      EstimatedCost is informational, for example "0.0123 USD". It is never
+                      used to enforce a limit.
+                    type: string
+                  inputTokens:
+                    format: int64
+                    type: integer
+                  outputTokens:
+                    format: int64
+                    type: integer
+                  steps:
+                    description: Steps is the number of model turns, each of which
+                      may call one tool.
+                    format: int32
+                    type: integer
+                  totalTokens:
+                    format: int64
+                    type: integer
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

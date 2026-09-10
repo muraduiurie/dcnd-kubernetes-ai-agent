@@ -1,0 +1,103 @@
+# The agent definition. Cluster-scoped: creating one grants read access across
+# the namespaces it lists, so it needs cluster-level RBAC to create.
+#
+# The operator turns this into a runtime Deployment in ai-system, plus one
+# read-only agent-reader ServiceAccount, Role and RoleBinding in every
+# permitted namespace. The runtime itself never holds those permissions; it
+# borrows a ten-minute token per run.
+apiVersion: ai.dncp.io/v1alpha1
+kind: AIAgent
+metadata:
+  name: incident-investigator
+spec:
+  model:
+    provider: anthropic
+    model: claude-fable-5-1
+    # The Secret lives in the operator namespace, since this resource is
+    # cluster-scoped and has no namespace of its own.
+    secretRef:
+      name: anthropic-api-key
+      key: apiKey
+
+  # Becomes the system prompt. Run-specific text belongs in the objective of
+  # an AgentRun, never here.
+  instructions: |
+    You are a Kubernetes incident investigator.
+
+    Work from what the cluster tells you. Call read tools until you can name
+    the failure, then propose the smallest change that fixes it.
+
+    Every proposed action must cite the evidence ids that justify it. If the
+    evidence does not support a fix, say so and propose nothing.
+
+    Prefer restoring a known-good state over inventing a new one: if a
+    previous ReplicaSet was healthy, roll back to it rather than guessing a
+    value.
+
+  tools:
+    - kubernetes
+
+  # Listing a resource grants get, list and watch. There is no verbs field:
+  # read-only is structural, not a convention.
+  permissions:
+    namespaces:
+      - checkout
+    resources:
+      - pods
+      - pods/log
+      - events
+      - replicasets
+      - deployments
+      - configmaps
+      - services
+      - endpoints
+
+  policy:
+    # These always need a human, even for a run in auto mode. What is left out
+    # (RollbackDeployment, SetImage, RestartRollout) are reversible rollout
+    # operations.
+    approvalRequiredFor:
+      - Scale
+      - SetEnv
+      - SetResources
+      - SetConfigMapKey
+      - DeletePod
+      - RawPatch
+    # The escape hatch, off by default. Needed for the Service selector
+    # scenario. It is never auto-applied regardless of the list above.
+    allowRawPatch: true
+
+  # Enforced inside the runtime loop and reported in run status. There is no
+  # cost limit: price tables go stale, tokens and steps do not.
+  limits:
+    maxSteps: 20
+    maxTokensPerRun: 50000
+    timeout: 10m
+
+  # Alertmanager is the only trigger. A firing alert creates a run, a resolved
+  # notification supersedes it if nothing has been applied yet, and the alert
+  # fingerprint is the dedup key.
+  triggers:
+    - name: image-pull-failing
+      match:
+        alertname: PodImagePullFailing
+        severity: critical
+      objective: >-
+        Investigate why deployment {{ .Labels.deployment }} in namespace
+        {{ .Labels.namespace }} cannot pull its container image.
+      cooldown: 10m
+      remediationMode: propose
+
+    - name: crash-looping
+      match:
+        alertname: PodCrashLooping
+        severity: critical
+      objective: >-
+        Investigate why pods of deployment {{ .Labels.deployment }} in
+        namespace {{ .Labels.namespace }} are crash looping.
+      cooldown: 10m
+      remediationMode: propose
+
+  # Backstop against a cluster-wide outage starting one investigation per
+  # broken workload.
+  maxConcurrentRuns: 3

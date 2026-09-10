@@ -1,0 +1,626 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: agentruns.ai.dncp.io
+spec:
+  group: ai.dncp.io
+  names:
+    kind: AgentRun
+    listKind: AgentRunList
+    plural: agentruns
+    shortNames:
+    - ar
+    singular: agentrun
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.agentRef.name
+      name: Agent
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.createdBy.kind
+      name: Origin
+      type: string
+    - jsonPath: .status.usage.steps
+      name: Steps
+      type: integer
+    - jsonPath: .status.usage.totalTokens
+      name: Tokens
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AgentRun is one bounded investigation in a workload namespace. Spec is the
+          intent, status is the evidence, the proposals and what was done with them.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              AgentRunSpec is the intent: which agent, what to find out, and how far it
+              may go on its own.
+            properties:
+              agentRef:
+                description: AgentReference names the cluster-scoped AIAgent that
+                  executes a run.
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              approvalTimeout:
+                default: 1h
+                description: |-
+                  ApprovalTimeout is how long a run may wait in AwaitingApproval before
+                  it fails.
+                type: string
+              approvals:
+                items:
+                  description: |-
+                    Approval is written by a human, never by the runtime. It approves exactly
+                    one proposed action at exactly one digest. The operator recomputes the
+                    digest before applying and refuses on mismatch.
+                  properties:
+                    actionID:
+                      minLength: 1
+                      type: string
+                    digest:
+                      pattern: ^sha256:[a-f0-9]{64}$
+                      type: string
+                  required:
+                  - actionID
+                  - digest
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - actionID
+                x-kubernetes-list-type: map
+              decision:
+                description: Decision lets a human end a run without applying anything.
+                properties:
+                  declined:
+                    type: boolean
+                  reason:
+                    maxLength: 1024
+                    type: string
+                required:
+                - declined
+                type: object
+              objective:
+                description: |-
+                  Objective is untrusted input from whoever created the run. It goes into
+                  the user message, never the system prompt.
+                maxLength: 4096
+                minLength: 1
+                type: string
+              remediation:
+                description: |-
+                  RemediationSpec decides what happens to proposals once the runtime has
+                  written them.
+                properties:
+                  mode:
+                    default: propose
+                    description: |-
+                      RemediationMode decides what the operator does with proposed actions. The
+                      runtime behaves identically in both modes.
+                    enum:
+                    - propose
+                    - auto
+                    type: string
+                type: object
+            required:
+            - agentRef
+            - objective
+            type: object
+          status:
+            description: |-
+              AgentRunStatus is the record. The runtime and the operator each own their
+              fields through server-side apply with distinct field managers.
+            properties:
+              applied:
+                items:
+                  description: ActionResult records what an executor did with one
+                    proposed action.
+                  properties:
+                    actionID:
+                      minLength: 1
+                      type: string
+                    appliedAt:
+                      format: date-time
+                      type: string
+                    message:
+                      maxLength: 1024
+                      type: string
+                    succeeded:
+                      type: boolean
+                  required:
+                  - actionID
+                  - succeeded
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - actionID
+                x-kubernetes-list-type: map
+              attempts:
+                description: Attempts counts how many times a runtime pod claimed
+                  this run.
+                format: int32
+                type: integer
+              completedAt:
+                format: date-time
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              createdBy:
+                description: |-
+                  RunOrigin is recorded by the operator at admission so trigger-created and
+                  human-created runs are distinguishable in the audit trail.
+                properties:
+                  fingerprint:
+                    description: |-
+                      Fingerprint is the Alertmanager fingerprint. It is the dedup key for
+                      storm control and the key a resolved notification uses to supersede.
+                    type: string
+                  kind:
+                    description: RunOriginKind says who created the run.
+                    enum:
+                    - Alert
+                    - Human
+                    type: string
+                  trigger:
+                    description: Trigger is the name of the AIAgent trigger that created
+                      the run.
+                    type: string
+                required:
+                - kind
+                type: object
+              diagnosis:
+                description: Diagnosis is the runtime's conclusion, in words.
+                properties:
+                  detail:
+                    maxLength: 4096
+                    type: string
+                  summary:
+                    maxLength: 512
+                    type: string
+                required:
+                - summary
+                type: object
+              evidence:
+                items:
+                  description: |-
+                    Evidence is one observation produced by a tool call. Ids are assigned by
+                    the runtime from real tool results; the model may cite them and cannot
+                    invent them.
+                  properties:
+                    excerpt:
+                      description: |-
+                        Excerpt is the relevant fragment of the tool result. Status is not a
+                        log store; the full trace lives in the runtime logs.
+                      maxLength: 1024
+                      type: string
+                    id:
+                      minLength: 1
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    reason:
+                      description: |-
+                        Reason is the machine-readable reason where one exists, for example an
+                        Event reason or a container waiting reason.
+                      type: string
+                    step:
+                      description: Step is the model turn in which the tool was called.
+                      format: int32
+                      type: integer
+                    tool:
+                      description: Tool is the tool that produced this observation.
+                      minLength: 1
+                      type: string
+                  required:
+                  - excerpt
+                  - id
+                  - tool
+                  type: object
+                maxItems: 20
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
+              executor:
+                description: ExecutorInfo identifies the runtime pod that claimed
+                  the run.
+                properties:
+                  pod:
+                    type: string
+                  startedAt:
+                    format: date-time
+                    type: string
+                required:
+                - pod
+                type: object
+              message:
+                description: |-
+                  Message is a human-readable reason for the current phase, used for
+                  terminal phases such as Rejected and Failed.
+                maxLength: 1024
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                description: |-
+                  RunPhase is the coarse state of a run, kept for printer columns and the
+                  plugin. Conditions carry the detail.
+                enum:
+                - Pending
+                - Accepted
+                - Rejected
+                - Investigating
+                - AwaitingApproval
+                - Applying
+                - Verifying
+                - Succeeded
+                - Failed
+                - Declined
+                - Superseded
+                type: string
+              proposedActions:
+                items:
+                  description: |-
+                    ProposedAction is one typed change. The runtime writes id, type, target,
+                    the parameter block for the type, and evidenceRefs. The operator writes
+                    digest and dryRun.
+                  properties:
+                    digest:
+                      description: |-
+                        Digest is sha256 over the canonical JSON of type, target and the
+                        parameter block. Approvals reference it.
+                      pattern: ^sha256:[a-f0-9]{64}$
+                      type: string
+                    dryRun:
+                      description: |-
+                        DryRunResult is written by the operator after a server-side dry-run of the
+                        action, before anyone is asked to approve it.
+                      properties:
+                        checkedAt:
+                          format: date-time
+                          type: string
+                        message:
+                          maxLength: 1024
+                          type: string
+                        ok:
+                          type: boolean
+                      required:
+                      - ok
+                      type: object
+                    evidenceRefs:
+                      description: |-
+                        EvidenceRefs are ids from status.evidence. Every action must cite at
+                        least one; the runtime fails the run otherwise.
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                    id:
+                      minLength: 1
+                      type: string
+                    rawPatch:
+                      description: |-
+                        RawPatchParams are the parameters of RawPatch, the escape hatch. It is
+                        never auto-applied and only targets kinds the operator allow-lists.
+                      properties:
+                        patch:
+                          description: Patch is the patch body, a JSON array for json
+                            and an object otherwise.
+                          x-kubernetes-preserve-unknown-fields: true
+                        patchType:
+                          description: PatchType selects how a RawPatch body is applied.
+                          enum:
+                          - json
+                          - merge
+                          - strategic
+                          type: string
+                      required:
+                      - patch
+                      - patchType
+                      type: object
+                    rollback:
+                      description: RollbackParams are the parameters of RollbackDeployment.
+                      properties:
+                        toRevision:
+                          description: |-
+                            ToRevision is the deployment.kubernetes.io/revision of the ReplicaSet
+                            whose template is restored.
+                          format: int64
+                          minimum: 1
+                          type: integer
+                      required:
+                      - toRevision
+                      type: object
+                    scale:
+                      description: ScaleParams are the parameters of Scale.
+                      properties:
+                        replicas:
+                          format: int32
+                          minimum: 0
+                          type: integer
+                      required:
+                      - replicas
+                      type: object
+                    setConfigMapKey:
+                      description: SetConfigMapKeyParams are the parameters of SetConfigMapKey.
+                      properties:
+                        key:
+                          minLength: 1
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - key
+                      - value
+                      type: object
+                    setEnv:
+                      description: SetEnvParams are the parameters of SetEnv.
+                      properties:
+                        container:
+                          minLength: 1
+                          type: string
+                        name:
+                          minLength: 1
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - container
+                      - name
+                      - value
+                      type: object
+                    setImage:
+                      description: SetImageParams are the parameters of SetImage.
+                      properties:
+                        container:
+                          minLength: 1
+                          type: string
+                        image:
+                          minLength: 1
+                          type: string
+                      required:
+                      - container
+                      - image
+                      type: object
+                    setResources:
+                      description: SetResourcesParams are the parameters of SetResources.
+                      properties:
+                        container:
+                          minLength: 1
+                          type: string
+                        resources:
+                          description: ResourceRequirements describes the compute
+                            resource requirements.
+                          properties:
+                            claims:
+                              description: |-
+                                Claims lists the names of resources, defined in spec.resourceClaims,
+                                that are used by this container.
+
+                                This field depends on the
+                                DynamicResourceAllocation feature gate.
+
+                                This field is immutable. It can only be set for containers.
+                              items:
+                                description: ResourceClaim references one entry in
+                                  PodSpec.ResourceClaims.
+                                properties:
+                                  name:
+                                    description: |-
+                                      Name must match the name of one entry in pod.spec.resourceClaims of
+                                      the Pod where this field is used. It makes that resource available
+                                      inside a container.
+                                    type: string
+                                  request:
+                                    description: |-
+                                      Request is the name chosen for a request in the referenced claim.
+                                      If empty, everything from the claim is made available, otherwise
+                                      only the result of this request.
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - name
+                              x-kubernetes-list-type: map
+                            limits:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              description: |-
+                                Limits describes the maximum amount of compute resources allowed.
+                                More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                              type: object
+                            requests:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              description: |-
+                                Requests describes the minimum amount of compute resources required.
+                                If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                                otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                                More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                              type: object
+                          type: object
+                      required:
+                      - container
+                      - resources
+                      type: object
+                    target:
+                      description: |-
+                        TargetRef names the object an action changes. It is always in the run's
+                        namespace; the operator refuses anything else.
+                      properties:
+                        apiVersion:
+                          minLength: 1
+                          type: string
+                        kind:
+                          minLength: 1
+                          type: string
+                        name:
+                          minLength: 1
+                          type: string
+                      required:
+                      - apiVersion
+                      - kind
+                      - name
+                      type: object
+                    type:
+                      description: |-
+                        ActionType is the closed vocabulary of changes the operator knows how to
+                        apply. Each value has exactly one deterministic executor. The runtime may
+                        propose these and nothing else.
+                      enum:
+                      - RollbackDeployment
+                      - SetImage
+                      - Scale
+                      - RestartRollout
+                      - SetEnv
+                      - SetResources
+                      - SetConfigMapKey
+                      - DeletePod
+                      - RawPatch
+                      type: string
+                  required:
+                  - evidenceRefs
+                  - id
+                  - target
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
+              startedAt:
+                format: date-time
+                type: string
+              usage:
+                description: |-
+                  Usage records what an investigation consumed. Tokens and steps are
+                  enforced; estimatedCost is derived from them and reported only.
+                properties:
+                  estimatedCost:
+                    description: |-
+                      EstimatedCost is informational, for example "0.0123 USD". It is never
+                      used to enforce a limit.
+                    type: string
+                  inputTokens:
+                    format: int64
+                    type: integer
+                  outputTokens:
+                    format: int64
+                    type: integer
+                  steps:
+                    description: Steps is the number of model turns, each of which
+                      may call one tool.
+                    format: int32
+                    type: integer
+                  totalTokens:
+                    format: int64
+                    type: integer
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
