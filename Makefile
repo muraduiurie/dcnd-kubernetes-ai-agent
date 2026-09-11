@@ -33,3 +33,7 @@ manifests: controller-gen ## Generate CustomResourceDefinition manifests.
 clean-generated: ## Remove generated deepcopy code and CRD manifests.
 	rm -f api/*/zz_generated.deepcopy.go
 	rm -rf $(CRD_OUTPUT)
+
+.PHONY: test
+test: ## Run all unit tests with the race detector.
+	go test -race ./...

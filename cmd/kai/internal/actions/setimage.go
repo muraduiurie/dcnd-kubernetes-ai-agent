@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -21,15 +19,11 @@ var _ Executor = SetImage{}
 
 func (SetImage) Type() aiv1alpha1.ActionType { return aiv1alpha1.ActionSetImage }
 
-func (SetImage) Targets() []schema.GroupKind {
-	return []schema.GroupKind{{Group: "apps", Kind: "Deployment"}}
-}
+func (SetImage) Targets() []schema.GroupKind { return []schema.GroupKind{deploymentGK} }
 
 // Apply reads the Deployment, finds the container by name in containers and
 // then initContainers, and sends a strategic merge patch carrying only the
-// new image. The patch also carries the resourceVersion it was computed
-// from, so a concurrent change to the Deployment becomes a conflict and a
-// retry rather than a silent overwrite.
+// new image.
 func (SetImage) Apply(ctx context.Context, c client.Client, in Input) (Result, error) {
 	p := in.Action.SetImage
 	if p == nil {
@@ -38,11 +32,8 @@ func (SetImage) Apply(ctx context.Context, c client.Client, in Input) (Result, e
 
 	key := in.TargetKey()
 	var deploy appsv1.Deployment
-	if err := c.Get(ctx, key, &deploy); err != nil {
-		if apierrors.IsNotFound(err) {
-			return Result{}, &PreconditionError{Reason: fmt.Sprintf("deployment %s not found", key)}
-		}
-		return Result{}, fmt.Errorf("get deployment %s: %w", key, err)
+	if err := fetch(ctx, c, key, &deploy, "deployment"); err != nil {
+		return Result{}, err
 	}
 
 	original := deploy.DeepCopy()
@@ -56,30 +47,8 @@ func (SetImage) Apply(ctx context.Context, c client.Client, in Input) (Result, e
 	previous := container.Image
 	container.Image = p.Image
 
-	patch := client.StrategicMergeFrom(original, client.MergeFromWithOptimisticLock{})
-	var opts []client.PatchOption
-	if in.DryRun {
-		opts = append(opts, client.DryRunAll)
+	if err := c.Patch(ctx, &deploy, lockedPatch(original), patchOptions(in)...); err != nil {
+		return Result{}, wrapWrite(fmt.Sprintf("patch deployment %s", key), err)
 	}
-	if err := c.Patch(ctx, &deploy, patch, opts...); err != nil {
-		return Result{}, fmt.Errorf("patch deployment %s: %w", key, err)
-	}
-
 	return Result{Message: fmt.Sprintf("set image of container %s on deployment %s from %s to %s", p.Container, deploy.Name, previous, p.Image)}, nil
-}
-
-// findContainer returns a pointer into spec for the named container, looking
-// at containers first and initContainers second, or nil if neither has it.
-func findContainer(spec *corev1.PodSpec, name string) *corev1.Container {
-	for i := range spec.Containers {
-		if spec.Containers[i].Name == name {
-			return &spec.Containers[i]
-		}
-	}
-	for i := range spec.InitContainers {
-		if spec.InitContainers[i].Name == name {
-			return &spec.InitContainers[i]
-		}
-	}
-	return nil
 }
